@@ -1,4 +1,8 @@
-Flask
-gunicorn
+flask
+flask-cors
+spacy
 scikit-learn
 numpy
+gunicorn
+requests
+pillow

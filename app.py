@@ -1,143 +1,318 @@
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 import pickle
 import re
+import spacy
+import os
+import requests
 
 app = Flask(__name__)
+CORS(app)
 
-# ==========================================
-# 1. LOAD MODEL
-# ==========================================
-print("🔧 Loading Model...")
+# ================================
+# LOAD NLP MODEL
+# ================================
+
+nlp = spacy.load("en_core_web_sm")
+
+# ================================
+# LOAD ML MODEL
+# ================================
 
 model = None
 vectorizer = None
 
 try:
-    with open('simple_model.pkl', 'rb') as f:
+    with open("simple_model.pkl", "rb") as f:
         model = pickle.load(f)
-    with open('simple_vectorizer.pkl', 'rb') as f:
+
+    with open("simple_vectorizer.pkl", "rb") as f:
         vectorizer = pickle.load(f)
-    print("✅ Model Loaded!")
+
+    print("✅ ML model loaded")
+
 except Exception as e:
-    print(f"❌ Error: {e}")
+    print("❌ ML model error:", e)
 
-# ==========================================
-# 2. HELPER: EXTRACT LOCATION (IF EXISTS)
-# ==========================================
-def extract_location_if_present(text):
-    """
-    Agar user text me location likha ho (jaise 'Kothrud', 'Baner'),
-    toh use nikal lo. Nahi toh 'Unknown' return karo.
-    """
-    # List of common locations in Pune
-    known_locations = [
-        "Kothrud", "Baner", "Hadapsar", "Shivajinagar", "Pune Station", 
-        "Camp", "Viman Nagar", "Aundh", "Pimple Saudagar", "Karjat",
-        "Kharadi", "Magarpatta", "Bibvewadi"
+# ================================
+# BAD WORD DETECTION
+# ================================
+
+BAD_WORDS = [
+    "idiot","stupid","bloody","abuse","harami","nalayak",
+    "gali","madarchod","bhosdike","chutiya"
+]
+
+def contains_bad_words(text):
+
+    t = text.lower()
+
+    for word in BAD_WORDS:
+        if word in t:
+            return True
+
+    return False
+
+# ================================
+# GARBAGE TEXT DETECTION
+# ================================
+
+def is_garbage(text):
+
+    text = text.strip()
+
+    if len(text) < 5:
+        return True
+
+    if re.fullmatch(r"[a-zA-Z]{8,}", text):
+        return True
+
+    return False
+
+# ================================
+# LOCATION DETECTION
+# ================================
+
+def detect_location(text):
+
+    doc = nlp(text)
+
+    for ent in doc.ents:
+        if ent.label_ in ["GPE","LOC"]:
+            return ent.text
+
+    return "Unknown"
+
+# ================================
+# CATEGORY DETECTION
+# ================================
+
+def detect_category(text):
+
+    t = text.lower()
+
+    categories = {
+
+        "Pothole":[
+            "pothole","खड्डा","गड्ढा"
+        ],
+
+        "Road Damage":[
+            "road damage","road crack","रस्ता खराब","सड़क टूटी"
+        ],
+
+        "Garbage Collection":[
+            "garbage","trash","waste","कचरा"
+        ],
+
+        "Illegal Dumping":[
+            "dump","illegal dump","कचरा फेकना"
+        ],
+
+        "Street Light":[
+            "street light","light not working","लाईट बंद"
+        ],
+
+        "Water Leakage":[
+            "water leak","pipeline leak","पाणी गळती"
+        ],
+
+        "Drainage Block":[
+            "drain","drainage","नाली बंद"
+        ],
+
+        "Tree Falling Risk":[
+            "tree falling","झाड पडणे"
+        ],
+
+        "Sewage Overflow":[
+            "sewage","sewer","सांडपाणी"
+        ],
+
+        "Park Maintenance":[
+            "park","garden","उद्यान"
+        ]
+    }
+
+    for category,keywords in categories.items():
+
+        for word in keywords:
+
+            if word in t:
+                return category
+
+    return None
+
+# ================================
+# IMAGE VALIDATION (PLACEHOLDER)
+# ================================
+
+def verify_image():
+
+    # future: integrate YOLO or CV model
+    return "unknown"
+
+
+def verify_image_with_hf(image_url: str, text: str):
+
+    url = str(image_url or '').strip()
+    if not url:
+        return { "status": "missing" }
+
+    token = os.environ.get('HF_API_TOKEN', '').strip()
+    if not token:
+        return { "status": "unknown" }
+
+    # Using a public zero-shot image classification model with candidate labels
+    # so we can score whether the photo matches a civic issue description.
+    endpoint = os.environ.get('HF_IMAGE_VERIFY_URL', 'https://api-inference.huggingface.co/models/openai/clip-vit-base-patch32')
+    headers = { 'Authorization': f'Bearer {token}' }
+
+    labels = [
+        "photo relevant to the complaint",
+        "unrelated photo",
+        "random image",
+        "street pothole",
+        "garbage on street",
+        "broken street light",
+        "water leakage",
+        "drainage blockage",
+        "sewage overflow",
+        "road damage",
     ]
-    
-    text_lower = text.lower()
-    found_loc = "Unknown"
-    
-    for loc in known_locations:
-        if loc.lower() in text_lower:
-            found_loc = loc
-            break
-            
-    return found_loc
 
-# ==========================================
-# 3. HTML
-# ==========================================
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>NagrikGPT Summarizer</title>
-    <style>
-        body { font-family: sans-serif; background-color: #f0f2f5; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-        .container { background: white; padding: 2.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 600px; }
-        h2 { text-align: center; color: #333; }
-        textarea { width: 100%; height: 120px; padding: 12px; margin-bottom: 20px; border: 1px solid #ccc; border-radius: 8px; }
-        button { width: 100%; padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; }
-        button:hover { background-color: #0056b3; }
-        #result { margin-top: 25px; padding: 15px; background: #e9ecef; border-radius: 8px; display: none; border-left: 5px solid #007bff; }
-        .loader { display: none; text-align: center; margin-top: 15px; color: #666; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h2>NagrikGPT Smart Summarizer</h2>
-        <textarea id="inputText" placeholder="Enter complaint here..."></textarea>
-        <button onclick="summarize()">Summarize</button>
-        <div class="loader" id="loader">Processing...</div>
-        <div id="result"><span id="summaryText"></span></div>
-    </div>
+    try:
+        payload = { 'inputs': image_url, 'parameters': { 'candidate_labels': labels } }
+        resp = requests.post(endpoint, headers=headers, json=payload, timeout=15)
+        if resp.status_code >= 400:
+            return { "status": "unknown" }
+        data = resp.json() if resp.content else None
 
-    <script>
-        async function summarize() {
-            const text = document.getElementById('inputText').value;
-            const loader = document.getElementById('loader');
-            const resultDiv = document.getElementById('result');
-            
-            if (!text) return alert("Enter text!");
+        # HF returns either {labels:[], scores:[]} or a list; normalize
+        if isinstance(data, dict) and isinstance(data.get('scores'), list):
+            scores = data.get('scores')
+            lab = data.get('labels')
+            top_score = float(scores[0]) if scores else 0.0
+            top_label = str(lab[0]) if isinstance(lab, list) and lab else ''
+        elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+            top = data[0]
+            top_score = float(top.get('score') or 0.0)
+            top_label = str(top.get('label') or '')
+        else:
+            return { "status": "unknown" }
 
-            loader.style.display = 'block';
-            resultDiv.style.display = 'none';
+        # conservative threshold
+        if top_score >= 0.55 and top_label != 'unrelated photo' and top_label != 'random image':
+            return { "status": "valid", "score": top_score, "label": top_label }
+        return { "status": "invalid", "score": top_score, "label": top_label }
+    except Exception:
+        return { "status": "unknown" }
 
-            const response = await fetch('/summarize', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: text })
-            });
+# ================================
+# FAKE REPORT SCORE
+# ================================
 
-            const data = await response.json();
-            loader.style.display = 'none';
-            resultDiv.style.display = 'block';
-            document.getElementById('summaryText').innerText = data.summary;
-        }
-    </script>
-</body>
-</html>
-"""
+def calculate_score(text,location,image_status):
 
-# ==========================================
-# 4. ROUTE
-# ==========================================
+    score = 0
 
-@app.route('/')
-def home():
-    return render_template_string(HTML_TEMPLATE)
+    if not is_garbage(text):
+        score += 40
 
-@app.route('/summarize', methods=['POST'])
+    if location != "Unknown":
+        score += 30
+
+    if image_status == "valid":
+        score += 30
+
+    return score
+
+# ================================
+# HEALTH CHECK
+# ================================
+
+@app.route("/health")
+def health():
+
+    return jsonify({
+        "status":"running"
+    })
+
+# ================================
+# SUMMARIZE API
+# ================================
+
+@app.route("/summarize", methods=["POST"])
 def summarize():
-    if model is None: return jsonify({"summary": "Model not loaded"})
 
     data = request.json
-    text = data.get('text', '')
+    text = data.get("text","").strip()
+    image_url = data.get("image_url", "") if isinstance(data, dict) else ""
 
-    # 1. Detect Real Location
-    detected_loc = extract_location_if_present(text)
+    # BAD WORD BLOCK
+    if contains_bad_words(text):
 
-    # 2. Predict Summary (Model pura string dega)
-    # Example Output: "Street Light, Shivajinagar, No Injury, Low"
-    text_vector = vectorizer.transform([text])
-    raw_prediction = model.predict(text_vector)[0]
+        return jsonify({
+            "error":"Abusive language detected. Please use respectful language."
+        }),400
 
-    # 3. Clean the Prediction (Replace Guessed Location with Real Location)
-    # Split by comma
-    parts = raw_prediction.split(',')
-    
-    # Structure: Category, Location, Injury, Urgency
-    # We want to replace the 2nd part (Index 1) with our detected location
-    
-    if len(parts) >= 2:
-        parts[1] = detected_loc # Replace location
-        final_summary = ", ".join(parts)
+    # GARBAGE BLOCK
+    if is_garbage(text):
+
+        return jsonify({
+            "error":"Invalid complaint text."
+        }),400
+
+    # LOCATION
+    location = detect_location(text)
+
+    # CATEGORY
+    category = detect_category(text)
+
+    # ML FALLBACK
+    if category is None and model is not None:
+
+        try:
+            text_vector = vectorizer.transform([text])
+            raw_prediction = model.predict(text_vector)[0]
+
+            category = raw_prediction.split(",")[0]
+
+        except:
+            category = "General Issue"
+
+    # IMAGE CHECK
+    img = verify_image_with_hf(image_url, text)
+    image_status = img.get('status', 'unknown') if isinstance(img, dict) else 'unknown'
+
+    # REPORT SCORE
+    score = calculate_score(text,location,image_status)
+
+    if score >= 90:
+        status = "accepted"
     else:
-        final_summary = raw_prediction # Fallback
+        status = "flagged"
 
-    return jsonify({"summary": final_summary})
+    summary = f"{category}, {location}, No Injury, Low"
+
+    return jsonify({
+
+        "summary":summary,
+        "category":category,
+        "location":location,
+        "image_check":image_status,
+        "image": img,
+        "report_score":score,
+        "status":status
+    })
+
+# ================================
+# START SERVER
+# ================================
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+
+    print("🚀 NagrikGPT AI service running")
+
+    port = int(os.environ.get("PORT", "5000"))
+    app.run(host="0.0.0.0",port=port)
