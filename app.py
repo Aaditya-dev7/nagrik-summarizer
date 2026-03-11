@@ -11,7 +11,23 @@ CORS(app)
 
 BAD_WORDS = [
     "idiot","stupid","bloody","abuse",
-    "harami","nalayak","chutiya","madarchod"
+    "harami","nalayak","chutiya","madarchod",
+    "fuck","fucking","fucked","fucker","fuckers",
+    "shit","shitty","bullshit","bull shit",
+    "damn","dammit","goddamn",
+    "ass","asshole","assholes",
+    "bastard","bastards",
+    "bitch","bitches","bitching",
+    "crap","crappy",
+    "dick","dicks","dickhead",
+    "piss","pissed","pissing",
+    "whore","whores",
+    "slut","sluts",
+    "cock","cocks",
+    "pussy","pussies",
+    "wanker","wankers",
+    "suck","sucks","sucking",
+    "mc","bc","mkc","maderchod","bhenchod","bhadwa","randi","randwa"
 ]
 
 def contains_bad_words(text):
