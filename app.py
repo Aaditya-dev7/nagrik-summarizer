@@ -30,22 +30,43 @@ def contains_bad_words(text):
 
 def is_garbage(text):
 
-    if len(text) < 5:
+    # Too short
+    if len(text) < 10:
         return True
 
-    if re.fullmatch(r"[a-zA-Z]{8,}", text):
+    # Only single word with no spaces (likely gibberish)
+    if ' ' not in text and len(text) > 15:
+        return True
+
+    # Random keyboard mashing (mostly consonants, no vowels pattern)
+    vowels = set('aeiouAEIOU')
+    consonant_count = sum(1 for c in text if c.isalpha() and c not in vowels)
+    vowel_count = sum(1 for c in text if c in vowels)
+    if consonant_count > 10 and vowel_count == 0:
+        return True
+
+    # Repeated characters (e.g., "asdfasdfasdf" or "aaaaaaa")
+    if len(set(text.lower())) < 4 and len(text) > 10:
         return True
 
     return False
 
 # =============================
-# INDIA LOCATIONS (sample)
+# INDIA LOCATIONS (expanded)
 # =============================
 
 INDIA_CITIES = [
 "mumbai","delhi","pune","bangalore","hyderabad",
-"chennai","kolkata","ahmedabad","surat",
-"baner","kothrud","hadapsar","andheri","vashi"
+"chennai","kolkata","ahmedabad","surat","jaipur",
+"lucknow","kanpur","nagpur","indore","bhopal",
+"patna","ludhiana","agra","nashik","faridabad",
+"baner","kothrud","hadapsar","andheri","vashi",
+"nerul","thane","navi mumbai","powai","dadar",
+"bandra","juhu","churchgate","colaba","worli",
+"malad","borivali","kandivali","goregaon","bhandup",
+"thane","kalyan","dombivli","virar","vasai",
+"gurgaon","noida","ghaziabad","rohini","janakpuri",
+"rajouri","karol","lajpat","connaught","chandni"
 ]
 
 def detect_location(text):
@@ -55,6 +76,10 @@ def detect_location(text):
     for city in INDIA_CITIES:
         if city in t:
             return city.title()
+
+    # Check for common location indicators
+    if any(word in t for word in ["near", "at ", "in ", "around", "beside", "opposite", "behind", "front of"]):
+        return "Location mentioned"
 
     return "Unknown"
 
@@ -102,17 +127,47 @@ def detect_category(text):
 # REPORT SCORE
 # =============================
 
-def calculate_score(text,location):
+def calculate_score(text, location, category="General Issue"):
 
-    score = 0
+    score = 40  # Base score for valid text
 
-    if not is_garbage(text):
-        score += 50
+    # Length bonus (more detailed reports)
+    word_count = len(text.split())
+    if word_count >= 3:
+        score += 5
+    if word_count >= 5:
+        score += 5
+    if word_count >= 8:
+        score += 5
+    if word_count >= 12:
+        score += 5
+    if word_count >= 15:
+        score += 5
+    if word_count >= 20:
+        score += 5
 
+    # Location bonus
     if location != "Unknown":
-        score += 50
+        score += 15
+    if location == "Location mentioned":
+        score += 5
 
-    return score
+    # Category detection bonus
+    if category != "General Issue":
+        score += 10
+
+    # Sentence structure bonus (periods, commas indicate proper sentences)
+    if '.' in text:
+        score += 5
+    if ',' in text:
+        score += 3
+
+    # Urgency words bonus
+    urgency_words = ["urgent", "emergency", "dangerous", "hazard", "accident", "immediately", "asap", "serious"]
+    if any(word in text.lower() for word in urgency_words):
+        score += 5
+
+    return min(score, 100)  # Cap at 100
 
 # =============================
 # HEALTH
@@ -137,27 +192,29 @@ def summarize():
     if contains_bad_words(text):
 
         return jsonify({
+            "ok": False,
             "error":"Abusive language detected. Please use respectful language."
         }),400
 
     if is_garbage(text):
 
         return jsonify({
-            "error":"Invalid complaint text."
+            "ok": False,
+            "error":"Invalid complaint text. Please provide more details."
         }),400
 
     location = detect_location(text)
 
     category = detect_category(text)
 
-    score = calculate_score(text,location)
+    score = calculate_score(text, location, category)
 
-    status = "accepted" if score >= 70 else "flagged"
+    status = "accepted" if score >= 50 else "flagged"
 
     summary = f"{category}, {location}, No Injury, Low"
 
     return jsonify({
-
+        "ok": True,
         "summary":summary,
         "category":category,
         "location":location,
