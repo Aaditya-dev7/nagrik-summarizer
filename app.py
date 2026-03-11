@@ -1,65 +1,34 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import pickle
 import re
-import spacy
-import os
-import requests
 
 app = Flask(__name__)
 CORS(app)
 
-# ================================
-# LOAD NLP MODEL
-# ================================
-
-nlp = spacy.load("en_core_web_sm")
-
-# ================================
-# LOAD ML MODEL
-# ================================
-
-model = None
-vectorizer = None
-
-try:
-    with open("simple_model.pkl", "rb") as f:
-        model = pickle.load(f)
-
-    with open("simple_vectorizer.pkl", "rb") as f:
-        vectorizer = pickle.load(f)
-
-    print("✅ ML model loaded")
-
-except Exception as e:
-    print("❌ ML model error:", e)
-
-# ================================
-# BAD WORD DETECTION
-# ================================
+# =============================
+# BAD WORDS
+# =============================
 
 BAD_WORDS = [
-    "idiot","stupid","bloody","abuse","harami","nalayak",
-    "gali","madarchod","bhosdike","chutiya"
+    "idiot","stupid","bloody","abuse",
+    "harami","nalayak","chutiya","madarchod"
 ]
 
 def contains_bad_words(text):
 
     t = text.lower()
 
-    for word in BAD_WORDS:
-        if word in t:
+    for w in BAD_WORDS:
+        if w in t:
             return True
 
     return False
 
-# ================================
-# GARBAGE TEXT DETECTION
-# ================================
+# =============================
+# GARBAGE TEXT
+# =============================
 
 def is_garbage(text):
-
-    text = text.strip()
 
     if len(text) < 5:
         return True
@@ -69,229 +38,121 @@ def is_garbage(text):
 
     return False
 
-# ================================
-# LOCATION DETECTION
-# ================================
+# =============================
+# INDIA LOCATIONS (sample)
+# =============================
+
+INDIA_CITIES = [
+"mumbai","delhi","pune","bangalore","hyderabad",
+"chennai","kolkata","ahmedabad","surat",
+"baner","kothrud","hadapsar","andheri","vashi"
+]
 
 def detect_location(text):
 
-    doc = nlp(text)
+    t = text.lower()
 
-    for ent in doc.ents:
-        if ent.label_ in ["GPE","LOC"]:
-            return ent.text
+    for city in INDIA_CITIES:
+        if city in t:
+            return city.title()
 
     return "Unknown"
 
-# ================================
+# =============================
 # CATEGORY DETECTION
-# ================================
+# =============================
 
 def detect_category(text):
 
     t = text.lower()
 
-    categories = {
+    if "pothole" in t or "गड्ढा" in t or "खड्डा" in t:
+        return "Pothole"
 
-        "Pothole":[
-            "pothole","खड्डा","गड्ढा"
-        ],
+    if "road" in t or "road damage" in t:
+        return "Road Damage"
 
-        "Road Damage":[
-            "road damage","road crack","रस्ता खराब","सड़क टूटी"
-        ],
+    if "garbage" in t or "trash" in t or "कचरा" in t:
+        return "Garbage Collection"
 
-        "Garbage Collection":[
-            "garbage","trash","waste","कचरा"
-        ],
+    if "dump" in t:
+        return "Illegal Dumping"
 
-        "Illegal Dumping":[
-            "dump","illegal dump","कचरा फेकना"
-        ],
+    if "light" in t:
+        return "Street Light"
 
-        "Street Light":[
-            "street light","light not working","लाईट बंद"
-        ],
+    if "water leak" in t or "pipeline" in t:
+        return "Water Leakage"
 
-        "Water Leakage":[
-            "water leak","pipeline leak","पाणी गळती"
-        ],
+    if "drain" in t:
+        return "Drainage Block"
 
-        "Drainage Block":[
-            "drain","drainage","नाली बंद"
-        ],
+    if "tree" in t:
+        return "Tree Falling Risk"
 
-        "Tree Falling Risk":[
-            "tree falling","झाड पडणे"
-        ],
+    if "sewage" in t:
+        return "Sewage Overflow"
 
-        "Sewage Overflow":[
-            "sewage","sewer","सांडपाणी"
-        ],
+    if "park" in t:
+        return "Park Maintenance"
 
-        "Park Maintenance":[
-            "park","garden","उद्यान"
-        ]
-    }
+    return "General Issue"
 
-    for category,keywords in categories.items():
+# =============================
+# REPORT SCORE
+# =============================
 
-        for word in keywords:
-
-            if word in t:
-                return category
-
-    return None
-
-# ================================
-# IMAGE VALIDATION (PLACEHOLDER)
-# ================================
-
-def verify_image():
-
-    # future: integrate YOLO or CV model
-    return "unknown"
-
-
-def verify_image_with_hf(image_url: str, text: str):
-
-    url = str(image_url or '').strip()
-    if not url:
-        return { "status": "missing" }
-
-    token = os.environ.get('HF_API_TOKEN', '').strip()
-    if not token:
-        return { "status": "unknown" }
-
-    # Using a public zero-shot image classification model with candidate labels
-    # so we can score whether the photo matches a civic issue description.
-    endpoint = os.environ.get('HF_IMAGE_VERIFY_URL', 'https://api-inference.huggingface.co/models/openai/clip-vit-base-patch32')
-    headers = { 'Authorization': f'Bearer {token}' }
-
-    labels = [
-        "photo relevant to the complaint",
-        "unrelated photo",
-        "random image",
-        "street pothole",
-        "garbage on street",
-        "broken street light",
-        "water leakage",
-        "drainage blockage",
-        "sewage overflow",
-        "road damage",
-    ]
-
-    try:
-        payload = { 'inputs': image_url, 'parameters': { 'candidate_labels': labels } }
-        resp = requests.post(endpoint, headers=headers, json=payload, timeout=15)
-        if resp.status_code >= 400:
-            return { "status": "unknown" }
-        data = resp.json() if resp.content else None
-
-        # HF returns either {labels:[], scores:[]} or a list; normalize
-        if isinstance(data, dict) and isinstance(data.get('scores'), list):
-            scores = data.get('scores')
-            lab = data.get('labels')
-            top_score = float(scores[0]) if scores else 0.0
-            top_label = str(lab[0]) if isinstance(lab, list) and lab else ''
-        elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
-            top = data[0]
-            top_score = float(top.get('score') or 0.0)
-            top_label = str(top.get('label') or '')
-        else:
-            return { "status": "unknown" }
-
-        # conservative threshold
-        if top_score >= 0.55 and top_label != 'unrelated photo' and top_label != 'random image':
-            return { "status": "valid", "score": top_score, "label": top_label }
-        return { "status": "invalid", "score": top_score, "label": top_label }
-    except Exception:
-        return { "status": "unknown" }
-
-# ================================
-# FAKE REPORT SCORE
-# ================================
-
-def calculate_score(text,location,image_status):
+def calculate_score(text,location):
 
     score = 0
 
     if not is_garbage(text):
-        score += 40
+        score += 50
 
     if location != "Unknown":
-        score += 30
-
-    if image_status == "valid":
-        score += 30
+        score += 50
 
     return score
 
-# ================================
-# HEALTH CHECK
-# ================================
+# =============================
+# HEALTH
+# =============================
 
 @app.route("/health")
 def health():
 
-    return jsonify({
-        "status":"running"
-    })
+    return jsonify({"status":"running"})
 
-# ================================
-# SUMMARIZE API
-# ================================
+
+# =============================
+# SUMMARIZE
+# =============================
 
 @app.route("/summarize", methods=["POST"])
 def summarize():
 
     data = request.json
     text = data.get("text","").strip()
-    image_url = data.get("image_url", "") if isinstance(data, dict) else ""
 
-    # BAD WORD BLOCK
     if contains_bad_words(text):
 
         return jsonify({
             "error":"Abusive language detected. Please use respectful language."
         }),400
 
-    # GARBAGE BLOCK
     if is_garbage(text):
 
         return jsonify({
             "error":"Invalid complaint text."
         }),400
 
-    # LOCATION
     location = detect_location(text)
 
-    # CATEGORY
     category = detect_category(text)
 
-    # ML FALLBACK
-    if category is None and model is not None:
+    score = calculate_score(text,location)
 
-        try:
-            text_vector = vectorizer.transform([text])
-            raw_prediction = model.predict(text_vector)[0]
-
-            category = raw_prediction.split(",")[0]
-
-        except:
-            category = "General Issue"
-
-    # IMAGE CHECK
-    img = verify_image_with_hf(image_url, text)
-    image_status = img.get('status', 'unknown') if isinstance(img, dict) else 'unknown'
-
-    # REPORT SCORE
-    score = calculate_score(text,location,image_status)
-
-    if score >= 90:
-        status = "accepted"
-    else:
-        status = "flagged"
+    status = "accepted" if score >= 70 else "flagged"
 
     summary = f"{category}, {location}, No Injury, Low"
 
@@ -300,16 +161,19 @@ def summarize():
         "summary":summary,
         "category":category,
         "location":location,
-        "image_check":image_status,
-        "image": img,
         "report_score":score,
         "status":status
     })
 
-# ================================
-# START SERVER
-# ================================
+
+# =============================
+# START
+# =============================
+
+import os
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+
+    port = int(os.environ.get("PORT",10000))
+
+    app.run(host="0.0.0.0",port=port)
